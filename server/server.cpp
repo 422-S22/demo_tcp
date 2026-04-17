@@ -5,6 +5,7 @@
 Server::Server(QObject* parent) : QObject(parent) {
   // 1.创建 TCP 服务器
   m_server = new QTcpServer(this);
+  m_clentSocketList = new QList<QTcpSocket*>();
 
   // 2.连接信号 处理新连接
   connect(m_server, &QTcpServer::newConnection, this, &Server::onNewConnection);
@@ -20,24 +21,49 @@ Server::Server(QObject* parent) : QObject(parent) {
 
 void Server::onNewConnection() {
   // 获取新连接
-  m_clientSocket = m_server->nextPendingConnection();
-  qDebug() << "客户端已连接: " << m_clientSocket->peerAddress().toString();
+  QTcpSocket *clientSocket = m_server->nextPendingConnection();
+  qDebug() << "客户端已连接: " << clientSocket->peerAddress().toString();
+
+  // 分配ID，保存到列表和MAP
+  int id = m_nextId++;
+  m_clentSocketList->append(clientSocket);
+  m_clientMap[clientSocket] = id;
+  m_clientNameMap[clientSocket] = QString("用户%1").arg(id);
+
 
   // 有数据时触发 onReadyRead
-  connect(m_clientSocket, &QTcpSocket::readyRead, this, &Server::onReadyRead);
-
+  connect(clientSocket, &QTcpSocket::readyRead, this, &Server::onReadyRead);
   // 断开时打印日志
-  connect(m_clientSocket, &QTcpSocket::disconnected, [this](){
-    qDebug() << "客户端已断开";
-  });
+  connect(clientSocket, &QTcpSocket::disconnected, this, &Server::onDisconnected);
 }
 
 void Server::onReadyRead() {
   // 读取全部数据
-  QByteArray data = m_clientSocket->readAll();
-  qDebug() << "服务器收到数据: " << QString(data);
+  QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
+  if(!socket) return;
+
+  QByteArray data = socket->readAll();
+  QString msg = QString::fromUtf8(data).trimmed();
+  QString name = m_clientNameMap[socket];
+
+  qDebug() << "收到来自" << name << "的消息:" << msg;
 
   // 返回同样的数据
-  m_clientSocket->write(data);
+  socket->write(data);
   qDebug() << "return: " << data;
+}
+
+void Server::onDisconnected() {
+  QTcpSocket *socket = qobject_cast<QTcpSocket*>(sender());
+  if(!socket) return;
+
+  QString name = m_clientNameMap[socket];
+  qDebug() << name << "断开连接";
+
+  // 从列表中移除
+  m_clentSocketList->removeOne(socket);
+  m_clientMap.remove(socket);
+  m_clientNameMap.remove(socket);
+
+  socket->deleteLater();
 }
